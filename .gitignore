@@ -1,0 +1,5 @@
+.agent
+.agents
+.venv
+__pycache__
+data
