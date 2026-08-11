@@ -1,0 +1,21 @@
+If you don't feed both pipelines the exact same cleaned text and ask them the exact same queries, the benchmark is totally useless. It is entirely your duty to clean the raw data into a unified text format so it's a fair fight.
+
+Here is the complete arsenal of Hugging Face datasets for all three of your scenarios, along with how to prep them so both architectures are evaluated fairly on the exact same text:
+
+### 1. The "Supply Chain Butterfly Effect"
+
+To test how well both systems handle physical world dependencies, delays, and global sensemaking.
+
+* **Hugging Face Repo:** `azminetoushikwasi/SupplyGraph` (for deep multi-hop routing capabilities) or `miminmoons/olist-ecommerce-for-delivery-and-review-prediction` (for e-commerce/delivery logistics).
+
+### 2. The "Corporate Detective" (Messy Enterprise Data)
+
+To test how well both systems handle messy internal communications (who emailed whom about what project before a deadline).
+
+* **Hugging Face Repo:** `enronarchive/mail` or `amanneo/enron-mail-corpus-mini`.
+
+### 3. The Pop-Culture "Lore" Test
+
+To test extreme multi-hop reasoning across lineages, locations, and historical events.
+
+* **Hugging Face Repo:** `lostelf/game-of-thrones-fandom-wiki` or `Tuana/game-of-thrones-txt`.

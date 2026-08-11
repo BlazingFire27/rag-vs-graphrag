@@ -1,0 +1,50 @@
+
+## 1. Which Dataset to Implement First?
+
+**Start with "The Supply Chain Butterfly Effect" (Dataset 3).**
+
+Here is why:
+
+* **It proves undeniable business value.** Pop-culture lore (Dataset 2) is fun but often dismissed by executives as a toy problem. The Enron dataset (Dataset 1) is heavily overused in AI tutorials. Supply chain cascading failures are a massive, expensive enterprise problem that standard RAG handles terribly.
+* **It perfectly highlights GraphRAG's strength.** GraphRAG excels at "global synthesis"—connecting an external event (a strike) to a supplier, to a component, to a final product.
+* **It naturally supports the "Hybrid" angle.** You can show how a simple query ("weight limit of product X") should route to standard RAG, while the complex dependency query routes to GraphRAG.
+
+2. Which LLM to Use for Benchmarking?
+
+You must use meta-llama/llama-3.1-8b-instruct.
+
+GraphRAG's indexing phase (where the model reads your dataset and extracts relationships, nodes, and edges) is incredibly token-heavy, particularly on output tokens.
+
+Referencing the file "image_e27161.png" verbatim, meta-llama/llama-3.1-8b-instruct provides the lowest overall cost footprint for this type of workload on the platform:
+
+    Input / 1M: ₹2.00
+
+    Output / 1M: ₹5.01
+
+For comparison, referencing the file "image_e2744b.png" verbatim, even OpenAI's smallest model (gpt-4o-mini) costs ₹15.02 per 1M input tokens and ₹60.08 per 1M output tokens. Given the massive amount of JSON output required to construct a knowledge graph, gpt-4o-mini would immediately blow past your 20 Rs limit.
+
+Why this works for your budget:
+With your 20 Rs maximum budget, using meta-llama/llama-3.1-8b-instruct allows you to process up to ~10 million input tokens or generate nearly ~4 million output tokens. This gives you plenty of runway to run a highly optimized "micro-benchmark" (e.g., 30-50 documents) to prove the multi-hop superiority of GraphRAG over standard RAG and get the necessary latency/cost metrics for your LinkedIn post.
+
+## 3. Which Databases to Use?
+
+You have two architectural paths for your repository, and it depends on how complex you want the setup to be:
+
+**Path A: The Unified Engine (Recommended for your benchmark)**
+
+* **Database:** **ArcadeDB**
+* **Why:** In 2026, managing two separate stores (one for vectors, one for graphs) is considered operational overkill for new projects. ArcadeDB is fully open-source (Apache 2.0) and supports both native vector search and graph traversals in a single engine. This makes your open-source repo much easier for others to clone and run.
+
+**Path B: The Enterprise Standard (The "Dual-Store" approach)**
+
+* **Graph Database:** **Neo4j** or **TigerGraph**. Neo4j is excellent for developer ergonomics, while TigerGraph is preferred for massive production-scale GraphRAG.
+* **Vector Database:** **Chroma** or **Qdrant**.
+* **Why:** This is the canonical pattern. If you want your LinkedIn post to reflect what most enterprises currently have deployed (a messy dual-store sync), use Neo4j + Qdrant.
+
+---
+
+### Visualizing the Trade-off
+
+When you write the post, the most critical thing to communicate is *why* we don't just use GraphRAG for everything. The cost of indexing (LLM-driven entity extraction) is enormous compared to simple vector embedding.
+
+Here is a conceptual widget you can use to model how you'll present those metrics in your post:
