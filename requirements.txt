@@ -1,5 +1,10 @@
-langchain
-openai
-arcadedb-embedded
+llama-index
+llama-index-llms-openai
+llama-index-embeddings-huggingface
+llama-index-llms-openai-like
+langchain-google-vertexai
+ragas
+matplotlib
 datasets
 pandas
+nest-asyncio
