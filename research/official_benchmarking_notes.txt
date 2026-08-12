@@ -1,0 +1,35 @@
+### 1. Embedding Model Choice (Approved)
+
+Yes, using `sentence-transformers/all-MiniLM-L6-v2` via `langchain` locally is highly recommended for this specific benchmark.
+
+* **Cost Efficiency:** Since your budget is extremely tight (under ₹20), offloading the embedding generation to your local CPU/GPU ensures you spend ₹0 on vectorization. You can save your entire budget for the expensive LLM entity extraction in the GraphRAG pipeline.
+* **Scientific Isolation:** By using a standard, well-understood embedding model locally, you isolate the test specifically to the *retrieval architecture* (Vector Search vs. Graph Traversal). If you used a massive API-based embedding model, you risk conflating the strength of the embedding model with the strength of the actual vector architecture.
+
+### 2. LLM Base URL for AICredits
+
+To initialize the OpenAI client for `meta-llama/llama-3.1-8b-instruct` using your `AICREDITS_RAG_API_KEY`, the correct API Base URL is **`[https://api.aicredits.in/v1](https://api.aicredits.in/v1)`**.
+
+Because AICredits provides an OpenAI-compatible API, you can use the standard Python OpenAI SDK (or chatopenai or something similar) without modifying your LangChain or direct API call structure. You simply swap out the `base_url` and `api_key`.
+
+Here is an example ON how you should configure it in your `src/graphrag_baseline.py` and `src/evaluator.py` files:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="https://api.aicredits.in/v1", # The AICredits v1 endpoint
+    api_key= # Your AICREDITS_RAG_API_KEY
+)
+
+# To call the Llama 3.1 8B model:
+response = client.chat.completions.create(
+    model="meta-llama/llama-3.1-8b-instruct", 
+    messages=[
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Extract the supply chain graph..."}
+    ],
+)
+
+```
+
+The rest of your implementation strategy—specifically using ArcadeDB in embedded mode to eliminate network discrepancy and using specific cryptographic hashes to prevent data leakage in LLM answers—is brilliant and perfectly engineered for a rigorous benchmark.
