@@ -8,3 +8,4 @@ matplotlib
 datasets
 pandas
 nest-asyncio
+langchain-huggingface
