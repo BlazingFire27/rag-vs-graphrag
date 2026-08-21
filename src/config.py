@@ -8,13 +8,13 @@ import os
 # API Configuration
 # ---------------------------------------------------------------------------
 API_BASE_URL = "https://api.aicredits.in/v1"
-MODEL_NAME = "meta-llama/llama-3.1-8b-instruct"
+MODEL_NAME = "openai/gpt-oss-120b"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 def get_api_key():
-    api_key = os.environ.get("AICREDITS_RAG_API_KEY")
+    api_key = os.environ.get("RAG_GRAPHRAG_KEY")
     if not api_key:
-        print("[ERROR] AICREDITS_RAG_API_KEY environment variable not found.")
+        print("[ERROR] RAG_GRAPHRAG_KEY environment variable not found.")
         raise ValueError("Missing API Key")
     return api_key
 
