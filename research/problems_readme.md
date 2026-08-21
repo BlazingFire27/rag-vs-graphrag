@@ -1,0 +1,495 @@
+# Problems Ledger: RAG vs GraphRAG Benchmark
+
+Single source of truth for every problem this repository has hit, solved, or still carries.
+
+Read this file FIRST before touching any code. Do not re-read `.agent/memory/` or re-audit
+`src/` unless this ledger is stale.
+
+Companion document: [`../README.md`](../README.md) (project overview, architecture, how to run).
+
+Review date of this ledger: 2026-08-22
+Reviewed commit: `3f7fce0` ("config py updated")
+Sources: all 35 files in `.agent/memory/`, all files in `research/`, full line-by-line read of `src/`
+
+---
+
+## Table of Contents
+
+- [Section A: Solved Problem Archive](#section-a-solved-problem-archive)
+- [Section B: Open Problems](#section-b-open-problems)
+- [Section C: Known-Good Patterns and Invalidated Approaches](#section-c-known-good-patterns-and-invalidated-approaches)
+- [Section D: Half-Applied Provider Migration](#section-d-half-applied-provider-migration)
+- [Section E: Rule Compliance Scorecard](#section-e-rule-compliance-scorecard)
+- [Section F: Measurement Record](#section-f-measurement-record)
+
+---
+
+## Section A: Solved Problem Archive
+
+Every one of these is FIXED. They are recorded so the same wall is never hit twice.
+Cross-verified against `research/ragas_llamaindex_integration.md` (externally fact-checked).
+
+### A.1 Model / Client / Provider Errors
+
+| ID | Error or symptom | Root cause | Fix applied | Memory |
+|----|------------------|-----------|-------------|--------|
+| A1 | `ValueError: Unknown model 'meta-llama/llama-3.1-8b-instruct'` | `llama_index.llms.openai.OpenAI` enforces a hardcoded model registry | Replaced with `OpenAILike(model=..., api_base=..., is_chat_model=True)` | 08-15 15:55 |
+| A2 | Custom base URL rejected by stock `openai.OpenAI` in one code path | Strict provider parsing at the time | Route LlamaIndex through `OpenAILike`; RAGAS through an explicitly configured `openai.OpenAI(base_url=...)` client | 08-15 17:48 / 17:59 |
+| A3 | `os.environ.get("AICREDITS_RAG_API_KEY")` returned `None` on Windows | New Windows env vars are not inherited by already-running IDE / terminal / extension-host processes | Full terminal or machine restart, or inject into the session shell. Not a code bug | 08-11 09:49 |
+| A4 | `openai.AuthenticationError: Invalid API Key` | New key `RAG_GRAPHRAG_KEY` is provisioned for `agentrouter.org` but was sent to `api.aicredits.in` | `config.py` `API_BASE_URL` changed to `https://agentrouter.org/v1`. NOTE: only half applied, see [Section D](#section-d-half-applied-provider-migration) | 08-21 23:28 |
+
+### A.2 RAGAS 0.4.x Integration Errors (nine consecutive sessions)
+
+| ID | Error or symptom | Root cause | Fix applied | Memory |
+|----|------------------|-----------|-------------|--------|
+| A5 | `Faithfulness.__init__() missing 1 required positional argument: 'llm'` | RAGAS 0.4.x requires instantiated metric objects with explicit LLM injection, not module references | `Faithfulness(llm=evaluator_llm)`, `AnswerRelevancy(llm=..., embeddings=...)`, `ContextPrecision(llm=...)` | 08-15 17:19 / 17:31 |
+| A6 | `Collections metrics only support modern InstructorLLM. Found: LlamaIndexLLMWrapper` | `LlamaIndexLLMWrapper` deprecated for collections metrics | Abandoned it | 08-15 17:40 |
+| A7 | `Collections metrics only support modern InstructorLLM. Found: LangchainLLMWrapper` | `LangchainLLMWrapper` also rejected / deprecated | Abandoned it | 08-15 17:59 |
+| A8 | Same class of error again | Only `ragas.llms.llm_factory` produces an accepted `InstructorLLM` | `llm_factory(model=..., client=openai_client)` with a manually configured OpenAI-compatible client. This is the surviving pattern | 08-15 17:59 |
+| A9 | `All metrics must be initialised metric objects` even though metrics WERE initialised | RAGAS 0.4.x internal `isinstance` check does not recognise classes imported from the `ragas.metrics.collections` sub-module | Reverted the import path to the legacy stable one: `from ragas.metrics import Faithfulness, AnswerRelevancy, ContextPrecision` | 08-15 18:24 |
+| A10 | `Collections metrics only support modern embeddings. Found: LlamaIndexEmbeddingsWrapper` | LlamaIndex embedding wrapper rejected | Abandoned it | 08-15 18:08 |
+| A11 | `HuggingFaceEmbeddings.__init__() missing 1 required positional argument: 'model'` | RAGAS 0.4.x renamed the kwarg from `model_name` to `model` | Passed `model=...`. Superseded by A12 | 08-15 18:19 |
+| A12 | `AttributeError: 'HuggingFaceEmbeddings' object has no attribute 'embed_query'` | `ragas.embeddings.HuggingFaceEmbeddings` is genuinely BROKEN in 0.4.x, it does not implement the interface its own metrics call | Use `langchain_huggingface.HuggingFaceEmbeddings` wrapped in `ragas.embeddings.LangchainEmbeddingsWrapper`. The DeprecationWarning it emits is safe to ignore; the "replacement" it points to is the broken class | 08-15 18:33 |
+| A13 | `ModuleNotFoundError: No module named 'langchain_huggingface'` | LangChain decoupled HuggingFace into a standalone package | `pip install langchain-huggingface` inside `.venv`, added to `requirements.txt` | 08-15 18:38 |
+| A14 | `[WARN] RAGAS evaluation failed: 0` and all metrics became `None`, even though RAGAS had printed real scores | `evaluate()` returns a custom `EvaluationResult`, not a dict. `dict(results)` raises `KeyError: 0` internally | Removed the `dict()` cast; index keys directly off the result object | 08-15 18:57 |
+| A15 | `TypeError` from `json.dump` at the persistence step | `results["metric"]` returns a LIST of per-row `np.float64`, not a scalar average | `round(float(np.nanmean(results["metric"])), 4)` for each metric before returning | 08-15 19:30 |
+| A16 | `ModuleNotFoundError: langchain_community.chat_models.vertexai` on `import ragas` | RAGAS 0.4.3 imports a module removed in langchain-community 0.4.x | `_patch_ragas_vertexai()` in `evaluator.py` stubs the module into `sys.modules` before importing RAGAS | current code |
+
+### A.3 GraphRAG Build and Persistence Errors
+
+| ID | Error or symptom | Root cause | Fix applied | Memory |
+|----|------------------|-----------|-------------|--------|
+| A17 | `AttributeError: 'SimpleGraphStore' object has no attribute 'get_data'` | API surface differs from assumption | Read `graph_store._data.graph_dict` inside a `try/except AttributeError` | 08-15 15:55 |
+| A18 | GraphRAG build took roughly 15 minutes for 157 chunks | Synchronous triplet extraction, one LLM call per chunk | First tried `use_async=True` + `nest_asyncio` + `Settings.num_workers=9`. That did NOT work because `_build_index_from_nodes` runs a synchronous loop. Final approach: bypass `from_documents`, split nodes manually, and drive `index.insert_nodes([node])` through `ThreadPoolExecutor(max_workers=6)` | 08-15 15:55 / 17:19 |
+| A19 | API rejected the request burst (concurrency limit) | 6 threads fired simultaneously at t=0 | `_staggered_insert()` sleeps `random.uniform(0.8, 2.0)` before each insert to spread the burst | 08-15 17:19 |
+| A20 | `RuntimeError: dictionary changed size during iteration` inside `add_index_struct` | The index store auto-serialises to JSON while another thread mutates the struct dict | Monkey-patch `storage_context.index_store.add_index_struct = lambda x: None` for the duration of the threaded loop, restore it afterwards, then call it once manually | 08-15 17:19 |
+| A21 | Aborting mid-run left a corrupt `persist_dir` that later loaded as a broken index | `storage_context.persist()` writes files progressively | Write to `f"{persist_dir}_tmp"` first, then rename into place only on success. Applied in both `rag_baseline.py` and `graphrag_baseline.py`. NOTE: uses `os.rename`, which is itself a bug, see [B14](#b14) | 08-15 18:24 |
+| A22 | ALL GraphRAG RAGAS scores were exactly 0.0 | On cache reload the code called `StorageContext.from_defaults(persist_dir=..., graph_store=self.graph_store)` where `self.graph_store` was a fresh empty `SimpleGraphStore`. That empty store SHADOWED the persisted graph, so retrieval returned no context | Removed the `graph_store=` kwarg. `StorageContext.from_defaults(persist_dir=...)` alone loads the persisted graph correctly, then read it back with `self.graph_store = storage_context.graph_store` | 08-15 19:36, 08-16 16:25 |
+
+### A.4 Evaluator Resilience and Data Integrity
+
+| ID | Error or symptom | Root cause | Fix applied | Memory |
+|----|------------------|-----------|-------------|--------|
+| A23 | A crash during chunk 500 destroyed all completed results for chunks 200 and 300 | Metrics were only written to disk after the entire sweep finished | Moved persistence INSIDE the sweep loop as `_incremental_save()`, writing atomically via `os.replace` after every chunk | 08-15 19:08 |
+| A24 | Expensive generated answers were lost whenever RAGAS crashed | Answers lived only in RAM | Added `data/results/query_cache_{chunk_size}.json`, written before RAGAS runs, loaded on the next run to skip regeneration | 08-15 19:08 |
+| A25 | Re-running re-indexed and re-queried everything from scratch (4+ minutes wasted per run) | No caching at all | `os.path.exists(persist_dir)` check in both baselines. If present, `load_index_from_storage()` instead of building. Plus a "smart skip" in `evaluator.py` driven by `benchmark_metrics.json` | 08-15 18:08 / 19:08 |
+| A26 | Three TEMPORARY HACKS were left in `evaluator.py` (bypass smart skip, force GraphRAG rerun, mock RAG scores with hardcoded `0.4137`) | Deliberately introduced to isolate the A22 GraphRAG fix without paying for a full re-run | All three REMOVED in the 08-16 audit. Replaced by a proper three-state smart skip: fully-cached, RAG-only (`_rag_only` flag, reruns GraphRAG only), or nothing valid | 08-15 19:36, 08-16 16:25 |
+| A27 | `benchmark_metrics.json` contained raw numpy arrays and buggy GraphRAG zeros | Fallout from A15 and A22 | JSON rewritten with clean scalars. Cache loader now coerces any leftover list into `np.nanmean()` on load | 08-16 16:25 |
+| A28 | `chunk_size=200` was skipped when a rerun was expected | Smart skip works correctly: once both RAG and GraphRAG have scalar scores the entry is complete, so the loop skips it | Working as designed. To force a rerun you must delete the entry from `benchmark_metrics.json` (or add an ignore-cache CLI flag, which does not exist yet) | 08-16 16:47 |
+| A29 | Build-time bar for Vector RAG was invisible next to GraphRAG's; X-axis drew continuous ticks | Two orders of magnitude difference on a linear scale | `ax.set_yscale("log")` for build time, and forced discrete `ax.set_xticks(chunk_sizes)` across all plots | 08-15 17:19 |
+| A30 | GraphRAG `answer_relevancy` stayed 0.0 even after A22 was fixed | RAGAS answer-relevancy asks the judge LLM to reverse-generate a hypothetical question from the answer and cosine-compares it to the real question. A low-capacity 8B judge emits an empty or nonsensical question, so similarity collapses to 0.0 | Not a code bug. Diagnosis recorded: the judge model needs more capacity. `TEMPERATURE = 0.0` was verified already set, so judgments are deterministic | 08-16 17:09 |
+
+### A.5 Pre-LlamaIndex Era (the hand-rolled stack, now fully replaced)
+
+Kept for historical context only. None of this code exists any more.
+
+| ID | Problem | Outcome |
+|----|---------|---------|
+| A31 | GraphRAG triplet extraction failed on 4 of 5 chunks (`Expecting value: line 1 column 1`) because the LLM returned empty or non-JSON output | Patched with retries + strict system prompt + regex fence stripping, then made moot by the move to LlamaIndex `KnowledgeGraphIndex` |
+| A32 | `graphrag_baseline.query()` returned a HARDCODED string, `"GraphRAG Knowledge for: {q} (Simulated Subgraph Traversal)"`. The benchmark was structurally unfair: Vector RAG got real context, GraphRAG got a placeholder | Replaced by real BFS traversal, then by LlamaIndex graph query engines |
+| A33 | No LLM-as-a-Judge scoring existed; the evaluator collected answers and never scored them | A double-blind `llm_as_judge()` was written (Pipeline_A / Pipeline_B), then replaced by RAGAS |
+| A34 | `ModuleNotFoundError: No module named 'langchain.text_splitter'` | Needs `langchain-text-splitters` and `from langchain_text_splitters import ...`. Moot after moving to LlamaIndex `SentenceSplitter` |
+| A35 | `arcadedb-embedded` needs a heavy Py4J / Java backend that would not initialise cleanly, so a `DummyArcadeDB` shim was written | Both ArcadeDB and the shim were abandoned in favour of LlamaIndex `SimpleGraphStore` |
+
+---
+
+## Section B: Open Problems
+
+Findings from the 2026-08-22 code review of `src/` at commit `3f7fce0`. NOT fixed.
+Severity: BLOCKER (benchmark produces invalid data), HIGH, MEDIUM, LOW.
+
+### B.1 Blockers
+
+#### B1 - RAGAS judge still points at the OLD provider, key and model
+- **Severity**: BLOCKER
+- **Where**: `src/evaluator.py` lines 111-117
+- **What**: The judge is hardcoded to `os.environ.get("AICREDITS_RAG_API_KEY")`,
+  `base_url="https://api.aicredits.in/v1"` and `model="meta-llama/llama-3.1-8b-instruct"`,
+  while `src/config.py` now declares `agentrouter.org`, `RAG_GRAPHRAG_KEY` and
+  `openai/gpt-oss-120b`.
+- **Impact**: `AuthenticationError` is raised inside `run_ragas_evaluation`, swallowed by the
+  bare `except`, `{}` is returned, and every RAGAS column silently becomes `None`.
+  This is the direct reason `data/results/benchmark_metrics.json` is currently 0 bytes and
+  every published score is `null`.
+- **Also violates**: Reproducibility (hardcoded model/endpoint outside `config.py`).
+
+#### B2 - Generator model and judge model are different
+- **Severity**: BLOCKER (scientific validity)
+- **Where**: `src/config.py` line 11 vs `src/evaluator.py` line 117
+- **What**: Answers are generated by `openai/gpt-oss-120b` but scored by
+  `meta-llama/llama-3.1-8b-instruct`.
+- **Impact**: The recorded hyperparameters do not describe the experiment that ran. Any
+  score comparison across historical runs is invalid because the judge changed silently.
+  Also note A30: an 8B judge is the documented cause of the permanent `answer_relevancy = 0.0`.
+
+### B.2 High
+
+#### B3 - Bare `except` converts hard failures into silent nulls
+- **Severity**: HIGH
+- **Where**: `src/evaluator.py` lines 138-140
+- **What**: `except Exception as e: print WARN; return {}`.
+- **Impact**: Auth failures, dataset shape mismatches and rate limits all look identical and
+  all produce `None` metrics that then get written to disk as if they were legitimate.
+  Every historical "all scores are null" incident traces back to this swallow.
+- **Recommendation**: distinguish retryable from fatal, and never persist a row whose scores
+  are `None` without an explicit `error` field recording why.
+
+#### B4 - Cost rates in `config.py` are wrong
+- **Severity**: HIGH
+- **Where**: `src/config.py` lines 39-41
+- **What**: `COST_PER_1M_INPUT = 1.5`, `COST_PER_1M_OUTPUT = 2.0`, commented
+  "Approximate Llama 3.1 8B rates".
+- **Contradicts**: `research/implementation_update_v1.txt` states the actual Llama 3.1 8B
+  rates are INR 2.00 input / INR 5.01 output per 1M tokens. And the model in use is no longer
+  Llama at all, it is `openai/gpt-oss-120b`, whose rates are not recorded anywhere.
+- **Impact**: any cost figure derived from these constants would be wrong by roughly 2.5x on
+  output. Currently moot only because no cost is computed at all (see B5).
+
+#### B5 - No token accounting, no cost calculation, no budget abort
+- **Severity**: HIGH (direct rule violation)
+- **Where**: `src/evaluator.py`
+- **What**: `BUDGET_CAP_INR`, `COST_PER_1M_INPUT`, `COST_PER_1M_OUTPUT` are imported on
+  lines 22 and then NEVER referenced again. No input/output/cached token counting exists
+  anywhere in the codebase.
+- **Violates**: `rag-benchmark-standards.md` section 3 ("Track Exact Input, Output, and
+  Cached Tokens", "Hard-abort execution immediately if projected API expenditure approaches
+  the defined hard spending cap").
+- **Regression note**: a budget abort at 80% of the INR 20 cap DID exist in the hand-rolled
+  version (memory 08-11 10:34). It was lost in the LlamaIndex rewrite and never restored.
+  The headline "GraphRAG costs more" claim currently has zero measured cost data behind it.
+
+#### B6 - Latency is measured then thrown away
+- **Severity**: HIGH (direct rule violation)
+- **Where**: `src/rag_baseline.py` line 96, `src/graphrag_baseline.py` line 131,
+  `src/evaluator.py` lines 347-361
+- **What**: Both baselines compute and return a `latency` value, but `result_entry` never
+  includes it, so no latency ever reaches the JSON or CSV. Worse, the single number fuses
+  retrieval time and generation time into one.
+- **Violates**: section 3 ("Query Latency (split by retrieval time vs. generation latency)").
+- **Impact**: the latency-vs-cost plot required by section 4 cannot be produced.
+
+#### B7 - Hybrid RAG is never executed; the sweep is one-dimensional
+- **Severity**: HIGH (direct rule violation)
+- **Where**: `src/evaluator.py` line 27 (import), line 212 (`top_k = 3  # Fixed`)
+- **What**: `HybridRAG` is imported and never instantiated. `TOP_K_VALUES = [1, 3, 5]` and
+  `GRAPH_MAX_HOPS = [1, 2, 3]` in `config.py` are dead configuration - only `chunk_size`
+  is actually swept.
+- **Violates**: section 1 Query Symmetry ("identical query strings across Vector, Graph,
+  and Hybrid pipelines").
+- **Historical note**: Hybrid was deferred on 08-11 "until the pipeline runs fully" and was
+  never re-enabled.
+
+#### B8 - `ground_truths` can desync from GraphRAG questions
+- **Severity**: HIGH
+- **Where**: `src/evaluator.py` lines 288-312 and 344
+- **What**: `ground_truths` is only appended inside the `if need_rag_queries:` branch. In the
+  `_rag_only` path (`need_rag_queries = False`, `need_grag_queries = True`) `ground_truths`
+  is whatever the cache held, while `grag_questions` is rebuilt from scratch.
+- **Impact**: if the cache lacks `ground_truths`, `Dataset.from_dict` gets mismatched column
+  lengths, throws, is swallowed by B3, and GraphRAG scores become `None`.
+- **Recommendation**: build `ground_truths` unconditionally from `queries`, outside both branches.
+
+### B.3 Medium
+
+#### B9 - Build time is recorded as 0.0 whenever an index is loaded from cache
+- **Severity**: MEDIUM (false measurement)
+- **Where**: `src/rag_baseline.py` lines 32-42, `src/graphrag_baseline.py` lines 42-54,
+  `src/evaluator.py` lines 229-240 and 350-353
+- **What**: On the cache-load path, `self.build_time` is left at its `0.0` initial value and
+  `self.load_time` is set instead. The evaluator only writes `build_time`, so the metric
+  becomes a literal `0.0` seconds - indistinguishable from a real measurement.
+  `tracemalloc` is likewise started around a load, not a build, so peak-memory numbers mix
+  two different operations.
+- **Impact**: the build-time and memory plots silently mix "built now" with "loaded from
+  disk". Any run over a warm cache produces a chart that claims indexing is free.
+
+#### B10 - CSV writer derives its header from the first row only
+- **Severity**: MEDIUM
+- **Where**: `src/evaluator.py` line 153
+- **What**: `fieldnames = list(all_results[0].keys())`. Cached entries can carry the internal
+  `_rag_only` flag, so rows are not guaranteed to share a key set.
+- **Impact**: `csv.DictWriter` raises `ValueError: dict contains fields not in fieldnames`
+  and the internal `_rag_only` flag can leak into persisted JSON.
+
+#### B11 - The final persistence block is non-atomic and undoes the atomic guarantee
+- **Severity**: MEDIUM
+- **Where**: `src/evaluator.py` lines 379-392
+- **What**: After the loop, the JSON and CSV are rewritten with plain `open(..., "w")`,
+  bypassing the `os.replace` pattern that `_incremental_save` exists to enforce (A23).
+- **Impact**: an interrupt during this final write corrupts the result files that the
+  incremental saves had already made safe. It is also pure duplication of `_incremental_save`.
+
+#### B12 - No exponential backoff on any external call
+- **Severity**: MEDIUM (direct rule violation)
+- **Where**: `src/graphrag_baseline.py` lines 29-33 and 79-80
+- **What**: Concurrency control is `ThreadPoolExecutor(max_workers=6)` plus a fixed random
+  `time.sleep(0.8, 2.0)` per node. There is no retry, no backoff, no error capture per node.
+- **Violates**: section 5 ("Wrap all external API calls with exponential backoff retries").
+- **Impact**: a single 429 or transient 5xx silently drops that chunk's triplets. The graph
+  is then quietly incomplete and GraphRAG under-performs for a reason that never gets logged.
+
+#### B13 - Sleep-based staggering pollutes the headline build-time metric
+- **Severity**: MEDIUM (measurement integrity)
+- **Where**: `src/graphrag_baseline.py` lines 29-33
+- **What**: `build_time` is wall-clock and therefore includes 0.8-2.0 s of deliberate sleep
+  per node. At 157 nodes that is roughly 125-315 s of pure sleep inside the reported
+  1339 s for chunk_size=200.
+- **Impact**: the "GraphRAG is 262x-500x slower to index" figure (Section F) is inflated by
+  self-imposed throttling, not by the architecture. This must be disclosed or measured
+  separately (e.g. track cumulative sleep and subtract, or report both numbers).
+
+#### B14 - `os.rename` used where the project's own research mandates `os.replace`
+- **Severity**: MEDIUM
+- **Where**: `src/rag_baseline.py` line 64, `src/graphrag_baseline.py` line 92
+- **What**: Atomic index promotion uses `os.rename(tmp_dir, persist_dir)`.
+- **Contradicts**: `research/ragas_llamaindex_integration.md` section 5 states plainly that
+  `os.rename` FAILS on Windows if the destination exists and `os.replace` must be used. The
+  project is developed on Windows 11.
+- **Impact**: rebuilding over an existing index directory raises `FileExistsError`.
+  Note `os.replace` is not a drop-in for non-empty directories either, so the correct fix is
+  `shutil.rmtree(persist_dir)` before the rename, or rename the old dir aside first.
+
+#### B15 - Graph size and graph hyperparameters are never persisted
+- **Severity**: MEDIUM
+- **Where**: `src/graphrag_baseline.py` lines 96-103, `src/evaluator.py` lines 347-361
+- **What**: `max_triplets_per_chunk` sits at its constructor default of 10, is never swept
+  and never recorded. The graph subject count is printed as `[METRIC] GraphRAG Graph
+  Subjects: N` and then discarded - it never enters `result_entry`.
+- **Impact**: `generate_plots.py` can only plot `rag_node_count`, so there is no way to show
+  graph density against chunk size, and `GRAPH_MAX_HOPS` remains untested.
+
+#### B16 - Index cache key is `chunk_size` only
+- **Severity**: MEDIUM (reproducibility trap)
+- **Where**: `src/rag_baseline.py` line 29, `src/graphrag_baseline.py` line 40
+- **What**: `persist_dir = f"data/index/rag_{chunk_size}"` /
+  `f"data/index/graphrag_{chunk_size}"`.
+- **Impact**: changing the LLM, the embedding model, `CHUNK_OVERLAP`, or
+  `max_triplets_per_chunk` silently reuses a stale index built under different settings.
+  Given that the model changed from Llama 3.1 8B to gpt-oss-120b, the existing
+  `data/index/rag_200/` is already from a different configuration than the current config.
+- **Recommendation**: hash the full hyperparameter set into the directory name, and write a
+  `manifest.json` inside each index directory.
+
+#### B17 - Hybrid "fusion" is string concatenation
+- **Severity**: MEDIUM (methodological)
+- **Where**: `src/hybrid_rag.py` lines 26-51
+- **What**: The answer is `rag_answer + "\n\nGraph context: " + graph_answer`. Contexts are
+  deduplicated and merged, but no generation ever runs over the merged context.
+- **Impact**: this is not the documented hybrid architecture from `research/initial.txt`
+  ("run both and concatenate the RETRIEVAL results before sending them to the LLM"). It
+  concatenates the ANSWERS instead. It is guaranteed to score poorly on faithfulness and
+  answer relevancy for reasons that have nothing to do with hybrid retrieval, so it would
+  produce a misleading result even if B7 were fixed.
+- **Secondary**: it constructs its own `RAGBaseline` and `GraphRAGBaseline`, so wiring it into
+  the evaluator as written would load or build every index a second time.
+
+### B.4 Low
+
+#### B18 - `SEED` is imported everywhere and applied nowhere
+- **Severity**: LOW (direct rule violation)
+- **Where**: `src/config.py` line 33, `src/rag_baseline.py` line 8,
+  `src/graphrag_baseline.py` line 9
+- **What**: `SEED = 42` is defined and imported by both baselines but never passed to any
+  RNG. `_staggered_insert` calls `random.uniform` on the unseeded global RNG.
+  `EMBEDDING_MODEL` is also imported unused in `rag_baseline.py`.
+- **Violates**: section 1 ("Seed random number generators").
+
+#### B19 - `dataset_prep.py` hardcodes its own parameters
+- **Severity**: LOW
+- **Where**: `src/dataset_prep.py`
+- **What**: `num_rows=100` and `output_path` are function defaults rather than `config.py`
+  values; `CORPUS_PATH` is duplicated as a literal. No validation that the fetched frame is
+  non-empty or that 100 rows were actually returned. The row-to-text translation strategy
+  (`"{col} is {val}"` joined with spaces) is a real methodological decision that is
+  documented nowhere.
+- **Also**: the dataset actually used is
+  `miminmoons/olist-ecommerce-for-delivery-and-review-prediction`, not the
+  `azminetoushikwasi/SupplyGraph` option also listed in `research/dataset_fetch_info.txt`.
+
+#### B20 - Contradictory vertexai handling
+- **Severity**: LOW
+- **Where**: `src/evaluator.py` lines 29-43, `requirements.txt` line 5
+- **What**: `_patch_ragas_vertexai()` stubs out `langchain_community.chat_models.vertexai`
+  because it is missing, while `requirements.txt` still installs `langchain-google-vertexai`.
+- **Recommendation**: keep the stub (it is the lighter fix) and drop the dependency, or vice
+  versa, but not both.
+
+#### B21 - Zero version pins
+- **Severity**: LOW
+- **Where**: `requirements.txt`
+- **What**: No package is pinned, on a stack whose exact minor-version behaviour
+  (RAGAS 0.4.x) consumed nine debugging sessions (A5 through A16). Undeclared but imported:
+  `numpy`, `tqdm`, `openai`, `langchain-community`.
+- **Impact**: a fresh `pip install -r requirements.txt` may resolve to a RAGAS version where
+  every workaround in A.2 is either unnecessary or newly broken. This repository is not
+  currently reproducible by a third party.
+
+#### B22 - No root README, and `.gitignore` excludes all data
+- **Severity**: LOW (now partially addressed)
+- **Where**: repository root, `.gitignore`
+- **What**: There was no `README.md` at all until this review. `.gitignore` excludes `data`,
+  so the corpus, the test queries, the results and the plots are all absent from the repo.
+- **Impact**: the "open-source, clone-and-run, empirical evidence" goal from
+  `research/initial.txt` is unmet - a cloner gets code with no data, no queries and no results.
+- **Status**: `README.md` now exists (this review). The data-in-git decision is still open;
+  at minimum `data/test_queries.json` and `data/results/` should arguably be committed.
+
+---
+
+## Section C: Known-Good Patterns and Invalidated Approaches
+
+### C.1 Known-Good Patterns (DO NOT REGRESS)
+
+These were expensive to discover. Keep them.
+
+| Pattern | Why |
+|---------|-----|
+| `OpenAILike` for all LlamaIndex LLM calls | Bypasses the hardcoded model registry (A1) |
+| `llm_factory(model=..., client=openai.OpenAI(base_url=...))` for RAGAS | The only accepted `InstructorLLM` construction (A8) |
+| `from ragas.metrics import Faithfulness, ...` (legacy path) | The `collections` path fails RAGAS's own isinstance check (A9) |
+| `langchain_huggingface.HuggingFaceEmbeddings` + `LangchainEmbeddingsWrapper` | RAGAS's native HF embeddings class is broken (A12) |
+| `np.nanmean(results["metric"])` before serialising | `results[...]` returns a list of `np.float64` (A15) |
+| `StorageContext.from_defaults(persist_dir=...)` with NO `graph_store=` on reload | Passing an empty store shadows the persisted graph (A22) |
+| `os.replace` for atomic FILE swaps | Correct on Windows even when the destination exists |
+| Write index to `_tmp` dir, promote only on success | Prevents corrupt caches after an interrupt (A21) |
+| `query_cache_{chunk_size}.json` written BEFORE evaluation | Answers survive a RAGAS crash (A24) |
+| Save metrics inside the sweep loop, not after it | A crash on chunk 500 no longer destroys chunks 200/300 (A23) |
+| `_patch_ragas_vertexai()` before `import ragas` | Stubs a module RAGAS 0.4.3 still imports (A16) |
+| `TEMPERATURE = 0.0` on the judge LLM | Deterministic RAGAS judgments (08-16 17:09) |
+| `[INFO]/[DEBUG]/[WARN]/[ERROR]/[METRIC]/[TIMING]` prefixes, zero emojis | Rule compliance; verified clean across all of `src/` |
+
+### C.2 Invalidated Approaches (NEVER REVIVE)
+
+Each of these was tried and failed. Do not reintroduce them.
+
+| Invalidated | Replaced by | Why it died |
+|-------------|-------------|-------------|
+| Custom cosine-similarity retrieval | LlamaIndex `VectorStoreIndex` | Fragile, not production-representative |
+| Custom BFS graph traversal | LlamaIndex `KnowledgeGraphIndex` | Same |
+| Custom LLM-as-a-Judge (`llm_as_judge()`, Pipeline_A/B) | RAGAS | Not standardised or reproducible |
+| `arcadedb-embedded` | LlamaIndex `SimpleGraphStore` | Needs a heavy Py4J/Java backend that would not initialise |
+| `DummyArcadeDB` shim | Same | Existed only to work around the Java backend |
+| `llama_index.llms.openai.OpenAI` | `OpenAILike` | Hardcoded model registry (A1) |
+| `ragas.metrics.collections` import path | `ragas.metrics` | Fails RAGAS's own metric type check (A9) |
+| `ragas.embeddings.HuggingFaceEmbeddings` | `LangchainEmbeddingsWrapper(langchain_huggingface...)` | Missing `embed_query` (A12) |
+| `LlamaIndexLLMWrapper` for RAGAS | `llm_factory` | Rejected by collections metrics (A6) |
+| `LangchainLLMWrapper` / `langchain_openai.ChatOpenAI` for RAGAS | `llm_factory` | Also rejected (A7) |
+| `LlamaIndexEmbeddingsWrapper` for RAGAS | `LangchainEmbeddingsWrapper` | Rejected (A10) |
+| `dict(results)` on an `EvaluationResult` | Direct key access | `KeyError: 0` (A14) |
+| `use_async=True` + `Settings.num_workers` for KG build | `ThreadPoolExecutor` | `_build_index_from_nodes` is synchronous, async had no effect (A18) |
+| `graph_store=self.graph_store` in `StorageContext.from_defaults(persist_dir=...)` | Omit the kwarg | Silently zeroed every GraphRAG score (A22) |
+| Temporary hacks in `evaluator.py` (bypass skip, force loop, mock scores) | Proper three-state smart skip | Removed in the 08-16 audit; never reintroduce mocked metrics (A26) |
+| Linear y-axis on the build-time plot | `ax.set_yscale("log")` | Vector RAG bar was invisible next to GraphRAG (A29) |
+
+---
+
+## Section D: Half-Applied Provider Migration
+
+On 2026-08-21 the project moved from `api.aicredits.in` to `agentrouter.org`.
+Only `src/config.py` was updated. `src/evaluator.py` was not.
+
+| Concern | `src/config.py` (NEW) | `src/evaluator.py` L111-117 (OLD) |
+|---------|----------------------|-----------------------------------|
+| Base URL | `https://agentrouter.org/v1` | `https://api.aicredits.in/v1` |
+| Env var | `RAG_GRAPHRAG_KEY` | `AICREDITS_RAG_API_KEY` |
+| Model | `openai/gpt-oss-120b` | `meta-llama/llama-3.1-8b-instruct` |
+
+Consequence: LlamaIndex generation goes to agentrouter, RAGAS evaluation goes to aicredits
+with a key that endpoint does not recognise. Result: guaranteed `AuthenticationError`,
+swallowed by B3, so every score comes back `None`.
+
+Note also that `.continue/rules/general-rule.md` section 7 still documents
+`AICREDITS_RAG_API_KEY` as the project key, while `config.py` reads `RAG_GRAPHRAG_KEY`.
+The rules file and the code disagree. The rules file must not be edited without explicit
+instruction, so this needs a decision from the project owner.
+
+To close the migration, three things must line up: the base URL, the env var name, and the
+model name - and all three should come from `config.py`, never from a literal in
+`evaluator.py`.
+
+---
+
+## Section E: Rule Compliance Scorecard
+
+Against `.continue/rules/rag-benchmark-standards.md`.
+
+| Rule | Status | Notes |
+|------|--------|-------|
+| 1. Data Parity | PASS | Both pipelines read the same `data/supply_chain_text.txt` and share `Settings` |
+| 1. Query Symmetry | FAIL | Hybrid is never run (B7). Only Vector and Graph are compared |
+| 1. Zero System Bias | PARTIAL | No prompt handicapping found. But the judge model differs from the generator model (B2) |
+| 1. Double-Blind Evaluation | PARTIAL | RAGAS never sees the pipeline name, so it is blind in practice. But it is invoked twice in a fixed order rather than over a shuffled pool |
+| 1. Reproducibility | FAIL | `SEED` is never applied (B18). The model and endpoint are hardcoded outside config (B1). Index caches are not keyed by hyperparameters (B16) |
+| 2. Verbose Logging | PASS | Prefixed logs cover loading, chunking, indexing, querying, timing |
+| 2. No Emoji | PASS | Verified across all 7 files in `src/` - none found |
+| 2. Structured Output | PASS | `===` and `---` separators used consistently |
+| 3. Token Accounting | FAIL | Zero tokens counted anywhere (B5) |
+| 3. Budget Safety Check | FAIL | No abort exists; the constants are imported and unused (B5) |
+| 3. Index Build Time | PARTIAL | Measured, but reads `0.0` on cache hits (B9) and includes deliberate sleep (B13) |
+| 3. Query Latency split | FAIL | Fused into a single number and then discarded (B6) |
+| 3. Retrieval Quality | PARTIAL | Faithfulness / answer relevancy / context precision are wired up but currently return `None` (B1) |
+| 4. Structured Metrics Export | PARTIAL | JSON and CSV writers exist; both output files are currently 0 bytes |
+| 4. Continuous Plot Updating | PARTIAL | Auto-triggered after the sweep. But no latency-vs-cost plot and no per-query-type accuracy plot, both of which the rule requires |
+| 5. Graceful API Failures | FAIL | No exponential backoff anywhere (B12) |
+| 5. Non-Blocking Suites | PASS | Per-query `try/except` logs `[ERROR]` and appends `"ERROR"` instead of crashing |
+| 5. Pre-Execution Validation | PARTIAL | Corpus existence/size and API key are checked. `QUERIES_PATH` is opened unguarded. ArcadeDB check is moot (ArcadeDB was invalidated, A35) |
+
+---
+
+## Section F: Measurement Record
+
+Every number this project has ever produced. Treat all of them as provisional.
+
+### F.1 Current on-disk state (2026-08-22)
+
+| Artifact | State |
+|----------|-------|
+| `data/supply_chain_text.txt` | 61,280 bytes, 100 Olist rows as plain-English paragraphs |
+| `data/test_queries.json` | 8 queries: 3 precise, 2 natural_language, 3 multi_hop |
+| `data/index/rag_200/` | Present (vector store 1.38 MB, docstore 280 KB) |
+| `data/index/rag_300`, `rag_500` | ABSENT |
+| `data/index/graphrag_*` | ABSENT - every graph index has been deleted or was never persisted |
+| `data/results/benchmark_metrics.json` | 0 bytes |
+| `data/results/benchmark_metrics.csv` | 0 bytes |
+| `data/results/plots/*.png` | 5 plots, byte-identical to `data/first try results/` - they are stale copies of the first run |
+| `data/results/query_cache_*.json` | ABSENT |
+
+Implication: there is currently NO valid benchmark result on disk. The plots on display are
+from the first run, in which every RAGAS score was `null`.
+
+### F.2 The only committed run (`data/first try results/`)
+
+| chunk_size | RAG build (s) | RAG nodes | RAG peak mem (MB) | GraphRAG build (s) | GraphRAG peak mem (MB) | Slowdown |
+|-----------|--------------|-----------|-------------------|-------------------|------------------------|----------|
+| 200 | 5.1142 | 157 | 29.96 | 1339.3963 | 15.50 | 262x |
+| 300 | 2.8275 | 99 | 2.00 | 1142.3296 | 1.38 | 404x |
+| 500 | 1.4812 | 50 | 1.04 | 739.9021 | 0.87 | 500x |
+
+All six RAGAS columns in this run are `null`.
+Caveats: GraphRAG build time includes deliberate sleep (B13); the RAG peak memory of
+29.96 MB at chunk_size=200 includes first-time model load, which is why it does not scale
+with the other two rows.
+
+### F.3 RAGAS scores that existed only transiently
+
+Recorded in memory files, never persisted to the current results directory.
+
+| Pipeline | Faithfulness | Answer Relevancy | Context Precision | Source |
+|----------|-------------|------------------|-------------------|--------|
+| Vector RAG (chunk 200) | 0.4137 | 0.5704 | 0.4583 | memory 08-16 16:25 |
+| GraphRAG, before the A22 fix | 0.0 | 0.0 | 0.0 | memory 08-15 19:36 (invalid - empty graph) |
+| GraphRAG, after A22, run 1 | 0.4896 | 0.0 | 0.0 | memory 08-16 16:47 |
+| GraphRAG, after A22, run 2 | 0.3125 | 0.0 | - | memory 08-16 17:09 |
+
+Interpretation notes:
+- The 0.0 answer relevancy is a judge-capacity artifact, not a GraphRAG failure (A30).
+- Faithfulness moved 0.4896 -> 0.3125 across two runs of the same configuration, which is a
+  large variance for a supposedly deterministic (`temperature=0.0`) judge. Neither run is
+  trustworthy as a single-sample measurement. Multiple seeds and a stronger judge are needed
+  before any of these numbers goes into a public post.
+
+### F.4 Cost
+
+Only one cost figure has ever been observed: "Total cost was only INR 0.02" during the very
+first hand-rolled run (memory 08-11 10:48), against a cap of INR 20. No cost has been
+measured since the LlamaIndex rewrite, because no token accounting exists (B5).
