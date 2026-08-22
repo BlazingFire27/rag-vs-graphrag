@@ -7,7 +7,7 @@ import os
 # ---------------------------------------------------------------------------
 # API Configuration
 # ---------------------------------------------------------------------------
-API_BASE_URL = "https://api.aicredits.in/v1"
+API_BASE_URL = "https://agentrouter.org/v1"
 MODEL_NAME = "openai/gpt-oss-120b"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
