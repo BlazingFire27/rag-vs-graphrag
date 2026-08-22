@@ -11,16 +11,17 @@ import csv
 import tracemalloc
 
 from llama_index.core import Settings
-from llama_index.llms.openai_like import OpenAILike
+from llama_index.llms.anthropic import Anthropic as LlamaIndexAnthropic
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from datasets import Dataset
 
 from config import (
-    API_BASE_URL, MODEL_NAME, EMBEDDING_MODEL,
+    API_BASE_URL, API_KEY_ENV_VAR, MODEL_NAME, JUDGE_MODEL_NAME, EMBEDDING_MODEL,
     get_api_key, CHUNK_SIZES, TOP_K_VALUES,
-    CHUNK_OVERLAP, TEMPERATURE, SEED,
+    CHUNK_OVERLAP, TEMPERATURE, SEED, MAX_TOKENS,
     BUDGET_CAP_INR, COST_PER_1M_INPUT, COST_PER_1M_OUTPUT,
     CORPUS_PATH, QUERIES_PATH, RESULTS_DIR, PLOTS_DIR,
+    ANTHROPIC_CLIENT_HEADERS, ANTHROPIC_VERSION,
 )
 from rag_baseline import RAGBaseline
 from graphrag_baseline import GraphRAGBaseline
@@ -67,19 +68,18 @@ def load_queries():
 
 
 def setup_llama_index(api_key):
-    """Configure LlamaIndex global settings."""
+    """Configure LlamaIndex global settings with Anthropic-native LLM."""
     print("[INFO] Configuring LlamaIndex Settings...")
-    print(f"[INFO]   LLM: {MODEL_NAME} via {API_BASE_URL}")
+    print(f"[INFO]   LLM: {MODEL_NAME} via {API_BASE_URL} (Anthropic-native)")
     print(f"[INFO]   Embedding: {EMBEDDING_MODEL} (local)")
 
-    Settings.llm = OpenAILike(
+    Settings.llm = LlamaIndexAnthropic(
         model=MODEL_NAME,
-        api_base=API_BASE_URL,
         api_key=api_key,
+        base_url=API_BASE_URL,
         temperature=TEMPERATURE,
-        context_window=8192,
-        is_chat_model=True,
-        is_function_calling_model=False,
+        max_tokens=MAX_TOKENS,
+        default_headers=ANTHROPIC_CLIENT_HEADERS,
     )
     Settings.embed_model = HuggingFaceEmbedding(model_name=EMBEDDING_MODEL)
     Settings.num_workers = 6
@@ -101,23 +101,48 @@ def run_ragas_evaluation(questions, answers, contexts_list, ground_truths):
             "ground_truth": ground_truths,
         }
         dataset = Dataset.from_dict(data)
-        
+
         from ragas.llms import llm_factory
         from langchain_huggingface import HuggingFaceEmbeddings
         from ragas.embeddings import LangchainEmbeddingsWrapper
-        from openai import OpenAI
-        
-        # 1. Initialize the official OpenAI client pointing to AICredits
-        openai_client = OpenAI(
-            api_key=os.environ.get("AICREDITS_RAG_API_KEY"),
-            base_url="https://api.aicredits.in/v1"
+        import anthropic as anthropic_sdk
+
+        # --- B23 FIX: Monkey-patch anthropic SDK Messages.create() ---
+        # RAGAS 0.4.3 / instructor injects sampling params (temperature, top_p,
+        # top_k) directly into anthropic.resources.messages.Messages.create(),
+        # but anthropic SDK 1.0.0 removed them from the signature. We patch at
+        # the SDK class level so isinstance checks (used by instructor) still pass.
+        from anthropic.resources.messages import Messages as _AnthropicMessages
+        _STRIP_KWARGS = {"temperature", "top_p", "top_k"}
+        if not getattr(_AnthropicMessages, '_b23_patched', False):
+            _orig_create = _AnthropicMessages.create
+            def _patched_create(self, *args, **kwargs):
+                for k in _STRIP_KWARGS:
+                    kwargs.pop(k, None)
+                return _orig_create(self, *args, **kwargs)
+            _AnthropicMessages.create = _patched_create
+            _AnthropicMessages._b23_patched = True
+            print(f"[DEBUG] Applied B23 monkey-patch: stripping {_STRIP_KWARGS} from Messages.create().")
+
+        # 1. Anthropic-native client, configured ENTIRELY from config.py.
+        print(f"[INFO] RAGAS judge LLM: {JUDGE_MODEL_NAME} via {API_BASE_URL} (Anthropic-native)")
+        print(f"[INFO] RAGAS judge key source: os.environ['{API_KEY_ENV_VAR}']")
+        anthropic_client = anthropic_sdk.Anthropic(
+            api_key=get_api_key(),
+            base_url=API_BASE_URL,
+            default_headers=ANTHROPIC_CLIENT_HEADERS,
         )
-        
-        # 2. Pass it through RAGAS's llm_factory to generate the required InstructorLLM
-        evaluator_llm = llm_factory(model="meta-llama/llama-3.1-8b-instruct", client=openai_client)
-        
-        # 3. Robust LangChain wrapper for modern embeddings
-        hf_embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+
+        # 2. Build the RAGAS InstructorLLM via llm_factory with provider="anthropic".
+        #    JUDGE_MODEL_NAME is identical to MODEL_NAME by construction (A37).
+        evaluator_llm = llm_factory(
+            model=JUDGE_MODEL_NAME,
+            provider="anthropic",
+            client=anthropic_client,
+        )
+
+        # 3. Robust LangChain wrapper for modern embeddings (A12).
+        hf_embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
         evaluator_embeddings = LangchainEmbeddingsWrapper(hf_embeddings)
 
         results = ragas_evaluate(
@@ -137,6 +162,8 @@ def run_ragas_evaluation(questions, answers, contexts_list, ground_truths):
         }
     except Exception as e:
         print(f"[WARN] RAGAS evaluation failed: {e}")
+        import traceback
+        traceback.print_exc()
         return {}
 
 
