@@ -1,11 +1,46 @@
-llama-index
-llama-index-llms-openai
-llama-index-embeddings-huggingface
-llama-index-llms-openai-like
-langchain-google-vertexai
-ragas
-matplotlib
-datasets
-pandas
-nest-asyncio
-langchain-huggingface
+# RAG vs GraphRAG Benchmark - pinned dependencies
+#
+# Every version below is the exact version verified working on 2026-08-22.
+# Pins are MANDATORY, not cosmetic: RAGAS 0.4.x minor-version drift caused nine
+# consecutive debugging sessions (see research/problems_readme.md A5 through A16).
+# Do not loosen these without re-running the full benchmark.
+
+# --- LlamaIndex core and integrations ---------------------------------------
+llama-index==0.14.23
+llama-index-embeddings-huggingface==0.7.0
+# Anthropic-native LLM path. The agentrouter.org gateway ONLY accepts
+# Anthropic-shaped clients, so this is the generation path.
+llama-index-llms-anthropic==0.11.10
+# OpenAI paths retained for reference only. They CANNOT authenticate against
+# agentrouter.org (401 unauthorized_client_error). See problems_readme.md B23.
+llama-index-llms-openai==0.7.10
+llama-index-llms-openai-like==0.7.2
+
+# --- LLM clients ------------------------------------------------------------
+# Official Anthropic SDK. Used to build the RAGAS judge client.
+anthropic==1.0.0
+# Imported transitively by ragas/llm_factory. Was previously undeclared (B21).
+openai==2.53.0
+
+# --- Evaluation -------------------------------------------------------------
+ragas==0.4.3
+# ragas.embeddings.HuggingFaceEmbeddings is broken in 0.4.x (missing embed_query).
+# We use langchain_huggingface wrapped in LangchainEmbeddingsWrapper instead (A12).
+langchain-huggingface==1.2.2
+# Previously undeclared but imported (B21).
+langchain-community==0.4.2
+# NOTE: evaluator.py stubs out langchain_community.chat_models.vertexai because
+# RAGAS 0.4.3 still imports it (A16). This package is kept installed so that
+# removing the stub remains an option. Tracked as B20.
+langchain-google-vertexai==3.2.4
+
+# --- Data and plotting ------------------------------------------------------
+datasets==5.0.1
+pandas==3.0.5
+matplotlib==3.11.1
+# Previously undeclared but imported (B21).
+numpy==2.5.2
+tqdm==4.70.0
+
+# --- Async / concurrency ----------------------------------------------------
+nest-asyncio==1.6.0
