@@ -12,36 +12,17 @@ import os
 #
 # Integrity requirement: the generation LLM and the RAGAS judge LLM are the SAME
 # model on the SAME endpoint. A generator/judge mismatch invalidates cross-run
-# score comparison (see research/problems_readme.md B1/B2).
+# score comparison.
 #
 # -------------------------- ENDPOINT CONTRACT ------------------------------
-# Empirically verified against agentrouter.org on 2026-08-22. Do not "simplify"
-# any of this without re-probing; every line below was a failure mode first.
-#
-#   1. The gateway is ANTHROPIC-NATIVE. It is NOT OpenAI-compatible.
-#      The wire endpoint is POST https://agentrouter.org/v1/messages
-#      (Anthropic Messages API shape).
-#
-#   2. API_BASE_URL is the BARE ROOT, with no /v1 suffix. Both the anthropic SDK
-#      and llama-index-llms-anthropic append "/v1/messages" themselves. Passing
-#      ".../v1" here produces: 404 Invalid URL (POST /v1/v1/messages).
-#      Note the bare root in a BROWSER serves the HTML console, not the API.
-#
-#   3. Auth is the "x-api-key" header. "Authorization: Bearer" is REJECTED.
-#      The SDKs set x-api-key automatically from api_key=.
-#
-#   4. The gateway gates on CLIENT IDENTITY. A request without an
-#      Anthropic-SDK-style user-agent is rejected with
-#      401 {"type": "unauthorized_client_error"} even when the key is valid.
-#      That error means "client not allowed", NOT "bad key". Pass
-#      ANTHROPIC_CLIENT_HEADERS to make the client acceptable.
-#
-#   5. anthropic SDK 1.0.0 does NOT accept `temperature` as a kwarg to
-#      messages.create(). It must be sent via extra_body={"temperature": ...}.
-#      llama-index-llms-anthropic handles this internally, so temperature= is
-#      fine there; only direct SDK calls need extra_body.
+# 1. The endpoint MUST be ANTHROPIC-NATIVE (not OpenAI-compatible).
+# 2. Update the API_BASE_URL placeholder below with your actual Anthropic-native
+#    base URL (e.g., bare root without /v1/messages suffix, as SDKs append it).
+# 3. Auth uses the "x-api-key" header automatically set by the SDKs.
+# 4. If using a gateway that gates on client identity, ensure ANTHROPIC_CLIENT_HEADERS
+#    are passed to make the client acceptable.
 # ---------------------------------------------------------------------------
-API_BASE_URL = "https://agentrouter.org"
+API_BASE_URL = "<YOUR_ANTHROPIC_BASE_URL>"
 API_KEY_ENV_VAR = "RAG_GRAPHRAG_KEY"
 
 # Anthropic Messages API version header.
