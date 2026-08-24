@@ -2,10 +2,17 @@
 Vector RAG Baseline using LlamaIndex VectorStoreIndex.
 Replaces the hand-rolled chunking/embedding/cosine logic.
 """
+import os
+import shutil
 import time
-from llama_index.core import VectorStoreIndex, Document, Settings
+
+from llama_index.core import (
+    VectorStoreIndex,
+    Document,
+    StorageContext,
+    load_index_from_storage,
+)
 from llama_index.core.node_parser import SentenceSplitter
-from config import EMBEDDING_MODEL, SEED
 
 
 class RAGBaseline:
@@ -22,9 +29,6 @@ class RAGBaseline:
 
     def build_index(self, corpus_text):
         """Chunk the corpus and build a vector index."""
-        import os
-        import shutil
-        from llama_index.core import StorageContext, load_index_from_storage
         
         persist_dir = f"data/index/rag_{self.chunk_size}"
         tmp_dir = f"{persist_dir}_tmp"
