@@ -9,29 +9,31 @@ import time
 import json
 import csv
 import tracemalloc
+import types
+import importlib
+import traceback
+
+import numpy as np
+from datasets import Dataset
 
 from llama_index.core import Settings
 from llama_index.llms.anthropic import Anthropic as LlamaIndexAnthropic
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from datasets import Dataset
+
+import anthropic as anthropic_sdk
+from anthropic.resources.messages import Messages as _AnthropicMessages
 
 from config import (
     API_BASE_URL, API_KEY_ENV_VAR, MODEL_NAME, JUDGE_MODEL_NAME, EMBEDDING_MODEL,
-    get_api_key, CHUNK_SIZES, TOP_K_VALUES,
-    CHUNK_OVERLAP, TEMPERATURE, SEED, MAX_TOKENS,
-    BUDGET_CAP_INR, COST_PER_1M_INPUT, COST_PER_1M_OUTPUT,
-    CORPUS_PATH, QUERIES_PATH, RESULTS_DIR, PLOTS_DIR,
-    ANTHROPIC_CLIENT_HEADERS, ANTHROPIC_VERSION,
+    get_api_key, CHUNK_SIZES, CHUNK_OVERLAP, TEMPERATURE, MAX_TOKENS,
+    CORPUS_PATH, QUERIES_PATH, RESULTS_DIR, PLOTS_DIR, ANTHROPIC_CLIENT_HEADERS,
 )
 from rag_baseline import RAGBaseline
 from graphrag_baseline import GraphRAGBaseline
-from hybrid_rag import HybridRAG
+from generate_plots import generate_all_plots
 
 # Monkey-patch: RAGAS 0.4.3 tries to import langchain_community.chat_models.vertexai
 # which was removed in langchain-community 0.4.x. Stub it out before importing RAGAS.
-import types
-import importlib
-
 def _patch_ragas_vertexai():
     """Stub the missing vertexai module so RAGAS can import cleanly."""
     try:
@@ -47,6 +49,9 @@ _patch_ragas_vertexai()
 try:
     from ragas import evaluate as ragas_evaluate
     from ragas.metrics import Faithfulness, AnswerRelevancy, ContextPrecision
+    from ragas.llms import llm_factory
+    from langchain_huggingface import HuggingFaceEmbeddings
+    from ragas.embeddings import LangchainEmbeddingsWrapper
     RAGAS_AVAILABLE = True
     print("[INFO] RAGAS loaded successfully.")
 except ImportError as e:
@@ -102,17 +107,11 @@ def run_ragas_evaluation(questions, answers, contexts_list, ground_truths):
         }
         dataset = Dataset.from_dict(data)
 
-        from ragas.llms import llm_factory
-        from langchain_huggingface import HuggingFaceEmbeddings
-        from ragas.embeddings import LangchainEmbeddingsWrapper
-        import anthropic as anthropic_sdk
-
         # --- B23 FIX: Monkey-patch anthropic SDK Messages.create() ---
         # RAGAS 0.4.3 / instructor injects sampling params (temperature, top_p,
         # top_k) directly into anthropic.resources.messages.Messages.create(),
         # but anthropic SDK 1.0.0 removed them from the signature. We patch at
         # the SDK class level so isinstance checks (used by instructor) still pass.
-        from anthropic.resources.messages import Messages as _AnthropicMessages
         _STRIP_KWARGS = {"temperature", "top_p", "top_k"}
         if not getattr(_AnthropicMessages, '_b23_patched', False):
             _orig_create = _AnthropicMessages.create
@@ -154,7 +153,6 @@ def run_ragas_evaluation(questions, answers, contexts_list, ground_truths):
             ],
         )
         print(f"[METRIC] RAGAS Scores: {results}")
-        import numpy as np
         return {
             "faithfulness": round(float(np.nanmean(results["faithfulness"])), 4),
             "answer_relevancy": round(float(np.nanmean(results["answer_relevancy"])), 4),
@@ -162,7 +160,6 @@ def run_ragas_evaluation(questions, answers, contexts_list, ground_truths):
         }
     except Exception as e:
         print(f"[WARN] RAGAS evaluation failed: {e}")
-        import traceback
         traceback.print_exc()
         return {}
 
@@ -210,7 +207,6 @@ def evaluate_performance():
     cached_metrics = {}
     if os.path.exists(json_path):
         try:
-            import numpy as np
             with open(json_path, "r") as f:
                 data = json.load(f)
                 for entry in data.get("sweep_results", []):
@@ -421,7 +417,6 @@ def evaluate_performance():
     # --- Generate Plots ---
     print("[INFO] Generating plots...")
     try:
-        from generate_plots import generate_all_plots
         generate_all_plots(all_results)
     except Exception as e:
         print(f"[WARN] Plot generation failed: {e}")
