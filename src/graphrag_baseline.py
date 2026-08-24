@@ -2,17 +2,25 @@
 GraphRAG Baseline using LlamaIndex KnowledgeGraphIndex.
 Replaces the hand-rolled LLM extraction and BFS traversal.
 """
+import os
+import random
+import shutil
 import time
-from llama_index.core import KnowledgeGraphIndex, Document, Settings, StorageContext
-from llama_index.core.node_parser import SentenceSplitter
-from llama_index.core.graph_stores import SimpleGraphStore
-from config import SEED
-
 
 import nest_asyncio
 nest_asyncio.apply()
+
 from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
+
+from llama_index.core import (
+    KnowledgeGraphIndex,
+    Document,
+    StorageContext,
+    load_index_from_storage,
+)
+from llama_index.core.node_parser import SentenceSplitter
+from llama_index.core.graph_stores import SimpleGraphStore
 
 class GraphRAGBaseline:
     def __init__(self, chunk_size=300, chunk_overlap=50, max_triplets_per_chunk=10):
@@ -27,15 +35,12 @@ class GraphRAGBaseline:
         print(f"[INFO] Initialized GraphRAG Baseline (chunk_size={chunk_size}, max_triplets={max_triplets_per_chunk})")
 
     def _staggered_insert(self, node):
-        import random
         # Stagger requests by 0.5s to 2.0s to avoid triggering instantaneous API limits
         time.sleep(random.uniform(0.8, 2.0))
         self.index.insert_nodes([node])
 
     def build_index(self, corpus_text):
         """Extract knowledge graph triplets and build a graph index."""
-        import os
-        from llama_index.core import load_index_from_storage
         
         persist_dir = f"data/index/graphrag_{self.chunk_size}"
         
@@ -84,7 +89,6 @@ class GraphRAGBaseline:
         storage_context.index_store.add_index_struct(self.index.index_struct)
         
         # Persist to disk atomically
-        import shutil
         tmp_dir = f"{persist_dir}_tmp"
         if os.path.exists(tmp_dir):
             shutil.rmtree(tmp_dir)
